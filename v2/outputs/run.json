@@ -1,0 +1,20 @@
+{
+  "seed": 20260917,
+  "data_start": "2021-01-01",
+  "train_end": "2026-01-01",
+  "test_start": "2026-01-01",
+  "test_weeks": 4,
+  "negatives_per_positive": 10,
+  "n_segments": 11214,
+  "n_snapped_crashes": 62759,
+  "train_population_cells": 491442336,
+  "train_positives": 57617,
+  "tau": 0.00011724061152110429,
+  "sample_positive_rate": 0.09090909090909091,
+  "oversampling_factor": 775.4061474911919,
+  "logistic_raw_intercept": -2.3768954223557794,
+  "logistic_corrected_intercept": -9.125475308035515,
+  "mean_corrected_probability": 0.00016632619268190565,
+  "test_observed_rate": 0.00010350582180437719,
+  "runtime_seconds": 2414.9
+}

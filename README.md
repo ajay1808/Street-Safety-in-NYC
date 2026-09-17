@@ -1,20 +1,22 @@
 # Street Safety in NYC
 
-Predicting motor-vehicle accident risk at the **street-segment × hour** level in
-Manhattan, and rendering it as a map you can read for any hour of an upcoming day.
+Ranking motor-vehicle crash risk at the **street-segment × hour** level in Manhattan.
 
 Most road-safety analysis is retrospective — it maps where crashes *have* happened.
 This project asks a forward-looking question instead: given a specific block of a
 specific street, at 2pm on a Thursday, how risky is it relative to everywhere else?
-Crashes are joined onto the OpenStreetMap drive network, so the unit of prediction is
-an actual road segment rather than a zip code or a grid cell.
+Crashes are snapped onto individual road segments, so the unit of prediction is an
+actual block of street rather than a zip code or a grid cell.
+
+v1 rendered the result as a map. v2 rebuilds the modelling underneath it and reports
+how well the ranking actually performs; the map is not yet rebuilt on top.
 
 ## Status
 
 | Version | State | Notes |
 |---|---|---|
 | **v1** | Archived in [`v1/`](v1/) | Written August 2022. Runs, produces a map — but the headline metrics don't mean what they say. See below. |
-| **v2** | Planned | Rebuild that fixes the sampling and metric problems described below. |
+| **v2** | Built — [`v2/`](v2/) | Rebuilt September 2026. Corrected sampling, rare-event metrics, 34 tests. [Results](v2/README.md#results). |
 
 v1 is kept in the repository as-written, not quietly corrected. The gap between the
 two versions is the most useful thing in here.
@@ -24,10 +26,14 @@ two versions is the most useful thing in here.
 ```
 .
 ├── README.md                # you are here
-└── v1/                      # the 2022 original, archived as-is
-    ├── README.md            # what it does, how to run it, full list of known issues
-    ├── Motor_Vehicle_Safety_in_Manhattan_Project.ipynb
-    └── Borough Boundaries.geojson
+├── v1/                      # the 2022 original, archived as-is
+│   ├── README.md            # what it does, how to run it, full list of known issues
+│   ├── Motor_Vehicle_Safety_in_Manhattan_Project.ipynb
+│   └── Borough Boundaries.geojson
+└── v2/                      # the rebuild
+    ├── README.md            # results, the prior correction, what changed
+    ├── src/street_safety/   # data, panel, features, model, evaluate, pipeline
+    └── tests/               # 34 tests
 ```
 
 ## v1: what it got right
@@ -92,21 +98,46 @@ weights or a prior adjustment. Everything downstream inherits it.
 
 ## v2: how each of these is addressed
 
+Built and measured — full detail in [`v2/README.md`](v2/README.md).
+
 | # | v1 problem | v2 approach |
 |---|---|---|
-| 1 | Case-control sampling left uncorrected | Keep the sampling — it is a legitimate technique — but correct for it, via class weights or a King & Zeng rare-events intercept adjustment |
-| 2 | Accuracy at a 0.03% base rate | Report **PR-AUC** and **precision@k** as headline metrics, against two baselines: predict-nothing, and crashes ∝ segment length |
-| 3 | Uncalibrated score labelled a probability | Emit a **relative risk ranking**, which is what the map actually needs; call it a probability only once it is calibrated and reliability-checked |
-| 4 | `maxspeed` imputation leak | Derive all road attributes from one source after the join; impute after the train/test split, never before |
-| 5 | Outer merge inflating the frame | Construct the negative sample explicitly, with row-count assertions between steps |
-| 6 | Wrong `uvkey` construction | One helper for the composite key, covered by a test |
-| 7 | Unreproducible environment | Seeded throughout, pinned environment, vectorized pandas, warnings surfaced rather than silenced |
-| 8 | Random split, thin time window | **Time-based split** — train on an earlier period, test on a later one — over a multi-year crash pull |
+| 1 | Case-control sampling left uncorrected | Sampling kept, but τ is computed exactly and the intercept corrected via King & Zeng (2001) |
+| 2 | Accuracy at a 0.03% base rate | Accuracy is not computed at all. PR-AUC, precision@k and lift@k, against three baselines |
+| 3 | Uncalibrated score labelled a probability | Ranking is the headline; a score earns the word "probability" only after correction, and calibration is measured |
+| 4 | `maxspeed` imputation leak | NYC CSCL `posted_speed` is 91% populated; imputation moved inside a `Pipeline` fitted on training rows only |
+| 5 | Outer merge inflating the frame | Negatives built explicitly by rejection sampling, with row-count assertions |
+| 6 | Wrong `uvkey` construction | CSCL's `physicalid` is a single stable id — that bug class is gone by construction |
+| 7 | Unreproducible environment | One seed, pinned requirements, `FutureWarning` promoted to an error |
+| 8 | Random split, thin time window | Time-based split over 62,759 snapped crashes, 2021–2026 |
 
-The honest summary: v1 had a good question and a broken answer. v2 keeps the question.
+### Headline result
+
+Evaluated on the **complete, unsampled** panel — 11,214 segments × 672 hours =
+7,535,808 cells, 780 crash-hours, base rate 0.0104%:
+
+| Model | Avg precision | ROC-AUC | lift@5000 |
+|---|---|---|---|
+| Gradient boosting | **0.000653** | **0.838** | **25.1×** |
+| Baseline: prior crashes | 0.000518 | 0.820 | 19.3× |
+| Baseline: random | 0.000111 | 0.517 | 1.9× |
+
+The prior correction moves the logistic intercept from −2.377 to −9.125, which
+brings mean predicted probability to within **1.6×** of the observed rate. v1's
+numbers were off by about three orders of magnitude.
+
+And the honest part: a no-model baseline of "this segment has had crashes
+before" already reaches 19.3× lift. The model adds 26% on average precision
+over that — real, but not transformative. Predicting the specific hour a crash
+hits a specific block remains close to impossible; ranking relative risk is what
+works.
 
 ## Data sources
 
-- [NYC OpenData — Motor Vehicle Collisions](https://data.cityofnewyork.us/resource/h9gi-nx95)
-- [NYC OpenData — Borough Boundaries](https://data.cityofnewyork.us/City-Government/Borough-Boundaries/tqmj-j8zm)
-- [OpenStreetMap](https://www.openstreetmap.org/) drive network via [OSMnx](https://osmnx.readthedocs.io/)
+- [NYC OpenData — Motor Vehicle Collisions](https://data.cityofnewyork.us/resource/h9gi-nx95) — both versions
+- [NYC OpenData — CSCL Centerline](https://data.cityofnewyork.us/resource/inkn-q76z) — the street network in **v2**
+- [OpenStreetMap](https://www.openstreetmap.org/) drive network via [OSMnx](https://osmnx.readthedocs.io/) — the street network in **v1**
+- [NYC OpenData — Borough Boundaries](https://data.cityofnewyork.us/City-Government/Borough-Boundaries/tqmj-j8zm) — v1 only
+
+v2 switched the network source from OpenStreetMap to the city's own centerline;
+[the reasoning is in `v2/README.md`](v2/README.md#why-the-data-source-changed).
